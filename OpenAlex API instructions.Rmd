@@ -1,0 +1,196 @@
+---
+title: "OpenAlex API (browser and R)"
+author: "Nicki"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## OpenAlex API knowledge consolidation
+
+<https://docs.openalex.org/>
+
+[APIs for Dummies](https://www.scrapingbee.com/blog/api-for-dummies-learning-api/) (don't read the python code section. We are using R instead of python)
+
+## Using Firefox
+
+The OpenAlex API will return JSON in a web browser which can be read by a human.
+
+You simply type the API route and the directory (entities) you are looking up into your browser. The directories are massive, so it is necessary to drill down into a known subdirectory or filter. Directories (entities) = institutions; works; authors; sources; topics; publishers; funders. Examples:
+
+Institutions
+
+<https://api.openalex.org/institutions?search=Southampton> <https://api.openalex.org/institutions/https://ror.org/01ryk1543>
+
+Works (research outputs)
+
+e.g. <https://api.openalex.org/works?filter=from_publication_date:2024-08-01,to_publication_date:2024-09-15,institutions.ror:https://ror.org/01ryk1543>
+
+Authors
+
+e.g. <https://api.openalex.org/authors/https://orcid.org/0000-0002-4726-8018>
+
+Results are returned in pages of 25 results as standard.
+
+## Using Firefox to find outputs with a UoS affiliation for a specific time period
+
+To find research outputs with a UoS affiliation published in May 2024, paste this into Firefox:
+
+<https://api.openalex.org/works?filter=from_publication_date:2024-05-01,to_publication_date:2024-05-31,institutions.ror:https://ror.org/01ryk1543>
+
+![](images/Firefox1.PNG)
+
+![![](images/clipboard-3871603996.png)Click on the arrows to expand](images/Firefox2.PNG)
+
+Count = total number of works (research outputs). There are 25 results per page (so 524/25 = 21 pages in total. Each result is one research output and you can click to see the authors, title, DOI, funding info etc.
+
+## Using R to find outputs with a UoS affiliation for a specific time period
+
+Open R Studio - New file - R script
+
+When you are writing an R script, you can use \# at the start of a line to write comments to explain and document your code. Everything on the line following \# is ignored by R when it runs the code.
+
+Install and load the packages httr (for making requests to APIs)and jsonlite (for working with JSON data). Why these 2 packages? Because Steven knows they are useful! There are great resources online explaining packages, including [R for Librarians](https://ab604.github.io/library-r/) written for our team.
+
+Note that you need to enclose the package name in "" to `install.packages` but not with the `library` command to load.
+
+```         
+# install and load httr and jsonlite
+install.packages("httr")
+install.packages("jsonlite")
+library(httr)
+library(jsonlite)
+```
+
+You can also install packages by clicking on **Packages \> Install** and type a package name.
+
+![](images/Rpackageinstall.PNG)
+
+Then we define our search parameters variables date1, date2, and institution. Remember that in this example we are looking for research outputs with a UoS affiliation published in May 2024.
+
+```         
+# Define parameters
+date1<-"2024-05-01"
+date2<-"2024-05-31"
+ror<-"https://ror.org/01ryk1543"
+```
+
+The next step is to add your email address to the request header to add you to the API "polite list". I have used my email address, you will need to change it to yours.
+
+```         
+email <- "nsc@soton.ac.uk"
+```
+
+### Setup the data frame
+
+Data frames in R provide a structured, tabular format (like a spreadsheet) to organise and efficiently analyse potentially mixed data types. This section also builds the initial API endpoint URL for the first page of results.
+
+```         
+#setup dataframe for a full API call
+publication_data <- data.frame(
+  Authors = character(),
+  Title = character(),
+  Publisher = character(),
+  Sourcetitle = character(),
+  Type = character(),
+  DOI = character(),
+  Hyperlink.DOI = character(),
+  CollaboratingHEIs = character(),
+  Pubdate = character(),
+  Is.OA = character(),
+  OA.colour = character(),
+  License = character(),
+  Any.repository = character(),
+  Repositorylist = character(),
+  Datasets = character(),
+  SDG = character(),
+  Funder = character()
+)
+ 
+api_endpoint<-(paste0("https://api.openalex.org/works?filter=from_publication_date:",date1,",to_publication_date:",date2,",institutions.ror:",ror))
+ 
+response<-GET(api_endpoint,(add_headers(paste0("mailto=",email))))
+ 
+```
+
+You can use {} to wrap chunks of code and run them as a block.
+
+This section determines how many pages of results there are (in the May 2024 example there are 21). A successful API response has the status code 200. It then works out how many pages we need to loop through (remember we only get 25 records per page).
+
+```         
+{
+  #Read the first page of an api call to establish the number of pages
+  if (status_code(response) == 200) {
+    # Extract the content as text
+    content <- content(response, "text", encoding = "UTF-8")
+    # Parse the JSON content
+    json_data <- fromJSON(content)  
+  }
+}
+# Calculate the total number of pages (imax) based on the API response
+if (round(json_data[["meta"]][["count"]]/json_data[["meta"]][["per_page"]])<(json_data[["meta"]][["count"]]/json_data[["meta"]][["per_page"]])){
+# If the division results in a decimal (meaning there are more pages due to partial page), round up and add 1 to get the total number of pages
+  imax<-round(json_data[["meta"]][["count"]]/json_data[["meta"]][["per_page"]])+1
+}else{
+# If the answer is a whole number, calculate the number of pages by rounding down
+# Set the starting page number
+  imin<-1
+# Calculate the total number of pages
+  imax<-round(json_data[["meta"]][["count"]]/json_data[["meta"]][["per_page"]])
+}
+# Loop through all the pages
+for (i in imin:imax){
+  api_endpoint <- paste0("https://api.openalex.org/works?filter=from_publication_date:",date1,",to_publication_date:",date2,",institutions.ror:",ror,"&page=",i)
+  response <- GET(api_endpoint, add_headers(paste0("mailto=",email)))
+  if (status_code(response) == 200) {
+    # Extract the content as text
+    content <- content(response, "text", encoding = "UTF-8")
+    # Parse the JSON content
+    json_data <- fromJSON(content)  
+    for (n in 1:(sum(sapply(json_data[["results"]][["id"]],length)))){
+```
+
+Then we trust the process and use the work Steven put in to make the data display in an appropriate way:
+
+```         
+Authors <- paste(c(json_data[["results"]][["authorships"]][[n]][["raw_author_name"]]), collapse = ", ")
+Title<-json_data[["results"]][["title"]][[n]]
+Sourcetitle<- if (is.list(json_data[["results"]][["locations"]][[n]][["source"]])) {paste(c(json_data[["results"]][["locations"]][[n]][["source"]][["display_name"]][[1]]))}else{NA}
+doctype<-json_data[["results"]][["type_crossref"]][[n]]
+publisher<-json_data[["results"]][["primary_location"]][["source"]][["host_organization_name"]][[n]]
+Hyperlink.DOI<-json_data[["results"]][["doi"]][[n]]
+DOI<-gsub("^.*?(10\\.)", "10.", Hyperlink.DOI)
+CollaboratingHEIs<-json_data[["results"]][["institutions_distinct_count"]][[n]]
+publication.date<-json_data[["results"]][["publication_date"]][[n]]
+Is.OA<-json_data[["results"]][["best_oa_location"]][["is_oa"]][[n]]
+OA.colour<-paste(c(json_data[["results"]][["open_access"]][["oa_status"]][[n]]))
+license<-paste(c(json_data[["results"]][["best_oa_location"]][["license"]][[n]]))
+Any.repository<-json_data[["results"]][["open_access"]][["any_repository_has_fulltext"]][[n]]
+repositorylist<-if (is.list(json_data[["results"]][["locations"]][[n]][["source"]])) {paste0(json_data[["results"]][["locations"]][[n]][["source"]][["display_name"]][-1],collapse = "; ")}else{NA}
+Datasets<-if (length(json_data[["results"]][["datasets"]][[n]])==0){NA}else{paste(json_data[["results"]][["datasets"]][[n]], collapse = "; ")}
+SDG<- if (is.null(json_data[["results"]][["sustainable_development_goals"]][[n]][["display_name"]])){NA}else{paste(c(json_data[["results"]][["sustainable_development_goals"]][[n]][["display_name"]]),collapse = "; ")}
+Funder<-paste(c(json_data[["results"]][["grants"]][[n]][["funder_display_name"]]), collapse = "; ")
+```
+
+Then the final piece of magic 'binds' the data to the date frame instead of overwriting each page of results. In this example you should end up with 524 rows of publication information, just as you did in Firefox.
+
+```         
+publication_data <- rbind(publication_data,data.frame(Authors=Authors,Title=Title,Sourcetitle=Sourcetitle,Publisher=publisher,Type=doctype,DOI=DOI,Hyperlink.DOI=Hyperlink.DOI,CollaboratingHEIs=CollaboratingHEIs,Pubdate=publication.date,Is.OA=Is.OA,OA.colour=OA.colour,License=license,Any.repository=Any.repository,Repositorylist=repositorylist,Datasets=Datasets,SDG=SDG,Funder=Funder,stringsAsFactors = FALSE))
+    }
+  }}
+```
+
+The results will populate the Environment section, showing 524 obs (research outputs) of 17 variables (columns: author, title, publisher etc)
+
+![](images/environment.PNG)
+
+Click on publication-data to see it display in the tabular format.
+
+Export your results to csv with this (replace "My Filename" with whatever you want to call it)
+
+```         
+write.csv(publication_data,"My Filename")
+```
